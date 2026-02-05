@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/creachadair/jtree/ast"
@@ -165,19 +166,86 @@ func handleObject() SectionHandler {
 
 		newObj := existingOrNewObject(*parent, sectionKey)
 
-		pathCommentAlreadyAdded := false
 		for _, m := range childSection.Value.(*jwcc.Object).Members {
+			// Check if a member with the same key already exists
+			existingMemberIdx := newObj.IndexKey(ast.TextEqual(m.Key.String()))
+			if existingMemberIdx != -1 {
+				// Key exists - attempt to merge if both values are arrays
+				existingMember := newObj.Members[existingMemberIdx]
+				existingArr, existingIsArr := existingMember.Value.(*jwcc.Array)
+				newArr, newIsArr := m.Value.(*jwcc.Array)
+
+				if existingIsArr && newIsArr {
+					// Both are arrays - merge them with deduplication
+					mergedArr := mergeArraysWithDedup(existingArr, newArr)
+					existingMember.Value = mergedArr
+
+					// Add "and `path`" to existing comments for merged members
+					addMergeComment(existingMember, childPath)
+					continue
+				}
+				// If not both arrays, fall through to append (preserves original behavior)
+			}
+
 			newMember := &jwcc.Member{Key: m.Key, Value: m.Value}
 			newObj.Members = append(newObj.Members, newMember)
 
-			if !pathCommentAlreadyAdded {
-				pathComment(newMember, childPath)
-				pathCommentAlreadyAdded = true
-			}
+			// Always add "from" comment to track source for potential future merges
+			newMember.Comments().Before = []string{fmt.Sprintf("from `%s`", childPath)}
 		}
 
 		upsertMember(parent, sectionKey, newObj)
 	}
+}
+
+// commentsEqual checks if two comment slices are identical
+func commentsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeArraysWithDedup merges two arrays, deduplicating based on string representation
+func mergeArraysWithDedup(existing *jwcc.Array, new *jwcc.Array) *jwcc.Array {
+	result := &jwcc.Array{
+		Values: make([]jwcc.Value, 0, len(existing.Values)+len(new.Values)),
+	}
+
+	// Track seen values by their string representation
+	seen := make(map[string]bool)
+
+	// Add all existing values
+	for _, v := range existing.Values {
+		key := v.String()
+		if !seen[key] {
+			seen[key] = true
+			result.Values = append(result.Values, v)
+		}
+	}
+
+	// Add new values that aren't duplicates
+	for _, v := range new.Values {
+		key := v.String()
+		if !seen[key] {
+			seen[key] = true
+			result.Values = append(result.Values, v)
+		}
+	}
+
+	return result
+}
+
+// addMergeComment appends an "and `path`" comment to existing comments for merged members
+func addMergeComment(member *jwcc.Member, path string) {
+	existingComments := member.Comments().Before
+	newComment := fmt.Sprintf("and `%s`", path)
+	member.Comments().Before = append(existingComments, newComment)
 }
 
 func handleAutoApprovers() SectionHandler {
@@ -267,9 +335,44 @@ func mergeDocs(sections map[string]SectionHandler, parentDoc *ParsedDocument, ch
 		}
 	}
 
+	// After all merging is complete:
+	// 1. Sort members within each object section by their source comments
+	//    so groups from the same files appear together
+	// 2. Then dedupe consecutive identical comments to reduce visual noise
+	for _, section := range parentDoc.Object.Members {
+		if obj, ok := section.Value.(*jwcc.Object); ok {
+			sortMembersBySource(obj)
+			dedupeConsecutiveComments(obj)
+		}
+	}
+
 	parentDoc.Object.Sort()
 
 	return nil
+}
+
+// sortMembersBySource sorts object members by their source file comments
+// so that groups from the same source files appear together
+func sortMembersBySource(obj *jwcc.Object) {
+	sort.SliceStable(obj.Members, func(i, j int) bool {
+		commentsI := strings.Join(obj.Members[i].Comments().Before, "\n")
+		commentsJ := strings.Join(obj.Members[j].Comments().Before, "\n")
+		return commentsI < commentsJ
+	})
+}
+
+// dedupeConsecutiveComments removes comments from members that have the same
+// comments as the previous member (to reduce visual noise in the output)
+func dedupeConsecutiveComments(obj *jwcc.Object) {
+	var lastComments []string
+	for _, member := range obj.Members {
+		currentComments := member.Comments().Before
+		if commentsEqual(lastComments, currentComments) {
+			// Same as previous, clear the comments
+			member.Comments().Before = nil
+		}
+		lastComments = currentComments
+	}
 }
 
 func gatherChildren(path string) ([]*ParsedDocument, error) {

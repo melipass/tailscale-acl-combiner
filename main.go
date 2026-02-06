@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/creachadair/jtree/ast"
@@ -165,19 +166,62 @@ func handleObject() SectionHandler {
 
 		newObj := existingOrNewObject(*parent, sectionKey)
 
-		pathCommentAlreadyAdded := false
 		for _, m := range childSection.Value.(*jwcc.Object).Members {
+			existingMemberIdx := newObj.IndexKey(ast.TextEqual(m.Key.String()))
+			if existingMemberIdx != -1 {
+				existingMember := newObj.Members[existingMemberIdx]
+				existingArr, existingIsArr := existingMember.Value.(*jwcc.Array)
+				newArr, newIsArr := m.Value.(*jwcc.Array)
+
+				if existingIsArr && newIsArr {
+					mergedArr := mergeArraysWithDedup(existingArr, newArr)
+					existingMember.Value = mergedArr
+
+					addMergeComment(existingMember, childPath)
+					continue
+				}
+			}
+
 			newMember := &jwcc.Member{Key: m.Key, Value: m.Value}
 			newObj.Members = append(newObj.Members, newMember)
 
-			if !pathCommentAlreadyAdded {
-				pathComment(newMember, childPath)
-				pathCommentAlreadyAdded = true
-			}
+			newMember.Comments().Before = []string{fmt.Sprintf("from `%s`", childPath)}
 		}
 
 		upsertMember(parent, sectionKey, newObj)
 	}
+}
+
+func mergeArraysWithDedup(existing *jwcc.Array, new *jwcc.Array) *jwcc.Array {
+	result := &jwcc.Array{
+		Values: make([]jwcc.Value, 0, len(existing.Values)+len(new.Values)),
+	}
+
+	seen := make(map[string]bool)
+
+	for _, v := range existing.Values {
+		key := v.String()
+		if !seen[key] {
+			seen[key] = true
+			result.Values = append(result.Values, v)
+		}
+	}
+
+	for _, v := range new.Values {
+		key := v.String()
+		if !seen[key] {
+			seen[key] = true
+			result.Values = append(result.Values, v)
+		}
+	}
+
+	return result
+}
+
+func addMergeComment(member *jwcc.Member, path string) {
+	existingComments := member.Comments().Before
+	newComment := fmt.Sprintf("and `%s`", path)
+	member.Comments().Before = append(existingComments, newComment)
 }
 
 func handleAutoApprovers() SectionHandler {
@@ -267,9 +311,46 @@ func mergeDocs(sections map[string]SectionHandler, parentDoc *ParsedDocument, ch
 		}
 	}
 
+	for _, section := range parentDoc.Object.Members {
+		if obj, ok := section.Value.(*jwcc.Object); ok {
+			sortMembersBySource(obj)
+			dedupeConsecutiveComments(obj)
+		}
+	}
+
 	parentDoc.Object.Sort()
 
 	return nil
+}
+
+func sortMembersBySource(obj *jwcc.Object) {
+	sort.SliceStable(obj.Members, func(i, j int) bool {
+		commentsI := strings.Join(obj.Members[i].Comments().Before, "\n")
+		commentsJ := strings.Join(obj.Members[j].Comments().Before, "\n")
+		return commentsI < commentsJ
+	})
+}
+
+func dedupeConsecutiveComments(obj *jwcc.Object) {
+	var lastComments []string
+	for _, member := range obj.Members {
+		currentComments := member.Comments().Before
+
+		isEqual := len(lastComments) == len(currentComments)
+		if isEqual {
+			for i := range lastComments {
+				if lastComments[i] != currentComments[i] {
+					isEqual = false
+					break
+				}
+			}
+		}
+
+		if isEqual {
+			member.Comments().Before = nil
+		}
+		lastComments = currentComments
+	}
 }
 
 func gatherChildren(path string) ([]*ParsedDocument, error) {

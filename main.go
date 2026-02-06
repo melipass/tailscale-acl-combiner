@@ -272,12 +272,13 @@ func addParentPathComments(parentDoc *ParsedDocument) error {
 		default:
 			pathComment(parentSection, parentDoc.Path)
 		case *jwcc.Array:
-			if len(parentSection.Value.(*jwcc.Array).Values) != 0 {
-				pathComment(parentSection.Value.(*jwcc.Array).Values[0], parentDoc.Path)
+			for _, val := range parentSection.Value.(*jwcc.Array).Values {
+				pathComment(val, parentDoc.Path)
 			}
 		case *jwcc.Object:
-			if len(parentSection.Value.(*jwcc.Object).Members) != 0 {
-				pathComment(parentSection.Value.(*jwcc.Object).Members[0], parentDoc.Path)
+			// Add comment to ALL members so sorting works correctly
+			for _, member := range parentSection.Value.(*jwcc.Object).Members {
+				pathComment(member, parentDoc.Path)
 			}
 		}
 	}

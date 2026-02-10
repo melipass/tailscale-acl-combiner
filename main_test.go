@@ -951,8 +951,14 @@ func TestHandleObjectPreservesDistinctGroups(t *testing.T) {
 }
 
 func TestMergeArraysWithDedup(t *testing.T) {
-	arr1, _ := jwcc.Parse(strings.NewReader(`["a", "b", "c"]`))
-	arr2, _ := jwcc.Parse(strings.NewReader(`["b", "c", "d"]`))
+	arr1, err := jwcc.Parse(strings.NewReader(`["a", "b", "c"]`))
+	if err != nil {
+		t.Fatalf("expected no error, got [%v]", err)
+	}
+	arr2, err := jwcc.Parse(strings.NewReader(`["b", "c", "d"]`))
+	if err != nil {
+		t.Fatalf("expected no error, got [%v]", err)
+	}
 
 	result := mergeArraysWithDedup(arr1.Value.(*jwcc.Array), arr2.Value.(*jwcc.Array))
 
@@ -974,8 +980,14 @@ func TestMergeArraysWithDedup(t *testing.T) {
 }
 
 func TestMergeArraysWithDedupEmptyArrays(t *testing.T) {
-	arr1, _ := jwcc.Parse(strings.NewReader(`[]`))
-	arr2, _ := jwcc.Parse(strings.NewReader(`["a"]`))
+	arr1, err := jwcc.Parse(strings.NewReader(`[]`))
+	if err != nil {
+		t.Fatalf("expected no error, got [%v]", err)
+	}
+	arr2, err := jwcc.Parse(strings.NewReader(`["a"]`))
+	if err != nil {
+		t.Fatalf("expected no error, got [%v]", err)
+	}
 
 	result := mergeArraysWithDedup(arr1.Value.(*jwcc.Array), arr2.Value.(*jwcc.Array))
 	if len(result.Values) != 1 {

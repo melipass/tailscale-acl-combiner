@@ -276,7 +276,6 @@ func addParentPathComments(parentDoc *ParsedDocument) error {
 				pathComment(val, parentDoc.Path)
 			}
 		case *jwcc.Object:
-			// Add comment to ALL members so sorting works correctly
 			for _, member := range parentSection.Value.(*jwcc.Object).Members {
 				pathComment(member, parentDoc.Path)
 			}
@@ -313,9 +312,12 @@ func mergeDocs(sections map[string]SectionHandler, parentDoc *ParsedDocument, ch
 	}
 
 	for _, section := range parentDoc.Object.Members {
-		if obj, ok := section.Value.(*jwcc.Object); ok {
-			sortMembersBySource(obj)
-			dedupeConsecutiveComments(obj)
+		switch v := section.Value.(type) {
+		case *jwcc.Object:
+			sortMembersBySource(v)
+			dedupeCommentsInObject(v)
+		case *jwcc.Array:
+			dedupeCommentsInArray(v)
 		}
 	}
 
@@ -332,25 +334,65 @@ func sortMembersBySource(obj *jwcc.Object) {
 	})
 }
 
-func dedupeConsecutiveComments(obj *jwcc.Object) {
+func commentsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func dedupeCommentsInObject(obj *jwcc.Object) {
 	var lastComments []string
 	for _, member := range obj.Members {
 		currentComments := member.Comments().Before
 
-		isEqual := len(lastComments) == len(currentComments)
-		if isEqual {
-			for i := range lastComments {
-				if lastComments[i] != currentComments[i] {
-					isEqual = false
-					break
-				}
-			}
-		}
-
-		if isEqual {
+		if commentsEqual(lastComments, currentComments) {
 			member.Comments().Before = nil
 		}
 		lastComments = currentComments
+
+		switch v := member.Value.(type) {
+		case *jwcc.Array:
+			dedupeCommentsInArray(v)
+		case *jwcc.Object:
+			dedupeCommentsInObject(v)
+		}
+	}
+}
+
+func dedupeCommentsInArray(arr *jwcc.Array) {
+	var lastComments []string
+	for _, val := range arr.Values {
+		var currentComments []string
+		switch v := val.(type) {
+		case *jwcc.Object:
+			currentComments = v.Comments().Before
+			if commentsEqual(lastComments, currentComments) {
+				v.Comments().Before = nil
+			}
+			lastComments = currentComments
+			dedupeCommentsInObject(v)
+		case *jwcc.Array:
+			currentComments = v.Comments().Before
+			if commentsEqual(lastComments, currentComments) {
+				v.Comments().Before = nil
+			}
+			lastComments = currentComments
+			dedupeCommentsInArray(v)
+		default:
+			if c, ok := val.(interface{ Comments() *jwcc.Comments }); ok {
+				currentComments = c.Comments().Before
+				if commentsEqual(lastComments, currentComments) {
+					c.Comments().Before = nil
+				}
+				lastComments = currentComments
+			}
+		}
 	}
 }
 

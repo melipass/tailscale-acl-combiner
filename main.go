@@ -175,6 +175,15 @@ func handleObject() SectionHandler {
 
 				if existingIsArr && newIsArr {
 					mergedArr := mergeArraysWithDedup(existingArr, newArr)
+
+					if existingComments := existingArr.Comments(); existingComments != nil {
+						if mergedComments := mergedArr.Comments(); mergedComments != nil {
+							mergedComments.Before = existingComments.Before
+							mergedComments.Line = existingComments.Line
+							mergedComments.End = existingComments.End
+						}
+					}
+
 					existingMember.Value = mergedArr
 
 					addMergeComment(existingMember, parentPath, childPath)

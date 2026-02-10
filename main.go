@@ -177,7 +177,7 @@ func handleObject() SectionHandler {
 					mergedArr := mergeArraysWithDedup(existingArr, newArr)
 					existingMember.Value = mergedArr
 
-					addMergeComment(existingMember, childPath)
+					addMergeComment(existingMember, parentPath, childPath)
 					continue
 				}
 			}
@@ -218,9 +218,20 @@ func mergeArraysWithDedup(existing *jwcc.Array, new *jwcc.Array) *jwcc.Array {
 	return result
 }
 
-func addMergeComment(member *jwcc.Member, path string) {
+func addMergeComment(member *jwcc.Member, parentPath string, childPath string) {
 	existingComments := member.Comments().Before
-	newComment := fmt.Sprintf("and `%s`", path)
+
+	if len(existingComments) == 0 {
+		existingComments = []string{fmt.Sprintf("from `%s`", parentPath)}
+	}
+
+	newComment := fmt.Sprintf("and `%s`", childPath)
+	for _, c := range existingComments {
+		if c == newComment || c == fmt.Sprintf("from `%s`", childPath) {
+			return
+		}
+	}
+
 	member.Comments().Before = append(existingComments, newComment)
 }
 
